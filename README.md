@@ -170,6 +170,127 @@ curl -X POST "http://localhost:8000/api/v1/extract" \
 }
 ```
 
+### Chat with Hermes AI (`/api/v1/chat`)
+
+The chat endpoint allows you to interact with Hermes AI for intelligent data analysis, query refinement, and contextual insights.
+
+```bash
+# Chat with Hermes AI
+curl -X POST "http://localhost:8000/api/v1/chat" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "message": "Analyze this product data and identify trends",
+    "context": {
+      "previous_queries": ["Extract product names"],
+      "max_context_length": 5
+    },
+    "options": {
+      "temperature": 0.7,
+      "max_tokens": 1024,
+      "include_metadata": true
+    }
+  }'
+
+# Response
+{
+  "success": true,
+  "request_id": "chat_req_xyz789",
+  "response": {
+    "answer": "Based on the product data analysis, I've identified several key trends:\n\n1. **Price Range**: Products range from $15.99 to $199.99\n2. **Best Sellers**: Widget A and Widget B account for 65% of sales\n3. **Seasonal Pattern**: Higher sales in Q4 (holiday season)\n4. **Customer Segments**: Three main segments identified\n\nWould you like me to generate a detailed report?",
+    "confidence": 0.92,
+    "sources": ["product_data.json", "sales_metrics.csv"]
+  },
+  "metadata": {
+    "processing_time_ms": 1850,
+    "tokens_used": 456,
+    "data_classification": "internal"
+  }
+}
+```
+
+### Chat Examples
+
+| Use Case | Example Query |
+|----------|---------------|
+| **Data Analysis** | "Identify sales trends from this CSV data" |
+| **Query Refinement** | "Rewrite this SQL query for better performance" |
+| **Code Review** | "Review this Python script for security issues" |
+| **Documentation** | "Generate API documentation from this OpenAPI spec" |
+| **Summarization** | "Summarize this 1000-line report into key points" |
+
+### Advanced Chat Features
+
+```bash
+# Stream response for real-time interaction
+curl -X POST "http://localhost:8000/api/v1/chat" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json-lines" \
+  -d '{
+    "message": "Process this file in chunks",
+    "mode": "streaming",
+    "chunk_size": 1000
+  }'
+
+# Batch processing with multiple queries
+curl -X POST "http://localhost:8000/api/v1/chat/batch" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"message": "Question 1", "priority": "high"},
+    {"message": "Question 2", "priority": "medium"},
+    {"message": "Question 3", "priority": "low"}
+  ]'
+
+# Set context window for multi-turn conversations
+curl -X POST "http://localhost:8000/api/v1/chat" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I need to build a recommendation system",
+    "context_window": 10,
+    "session_id": "rec_sys_session_001"
+  }'
+```
+
+### Rate Limits & Limits
+
+| Endpoint | Rate Limit | Max Tokens |
+|----------|------------|------------|
+| `/api/v1/chat` | 30 requests/min | 1024 tokens |
+| `/api/v1/chat/batch` | 10 requests/min | 2048 tokens |
+| `/api/v1/chat/stream` | 20 requests/min | 512 tokens |
+
+### Error Handling
+
+```bash
+# Authentication error
+curl -X POST "http://localhost:8000/api/v1/chat" \
+  -d '{"message": "test"}'
+
+# Response
+{
+  "success": false,
+  "error": "INVALID_API_KEY",
+  "details": "The provided API key is invalid or has expired",
+  "request_id": "auth_error_001",
+  "timestamp": "2026-04-07T16:37:51.725800+00:00"
+}
+
+# Rate limit exceeded
+curl -X POST "http://localhost:8000/api/v1/chat" \
+  -H "X-RateLimit-Header: true" \
+  -d '{"message": "test"}'
+
+# Response
+{
+  "success": false,
+  "error": "RATE_LIMIT_EXCEEDED",
+  "details": "You have exceeded the rate limit of 30 requests per minute",
+  "retry_after": 45,
+  "request_id": "rate_limit_002",
+  "timestamp": "2026-04-07T16:37:51.725800+00:00"
+}
+```
+
 ## 🛠️ Development
 
 ### Run Tests
