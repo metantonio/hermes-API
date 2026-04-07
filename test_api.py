@@ -52,7 +52,8 @@ def test_config():
     print("\nTesting configuration...")
     
     try:
-        from config import get_settings, SETTINGS
+        from config import get_settings, Settings
+        # Use Settings class to create default settings
         settings = get_settings()
         print(f"  ✓ Settings loaded: {settings.APP_NAME}")
         print(f"    Environment: {settings.APP_ENV}")
@@ -61,6 +62,8 @@ def test_config():
         return True
     except Exception as e:
         print(f"  ✗ Configuration test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -117,28 +120,41 @@ def test_models():
     print("\nTesting database models...")
     
     try:
-        from models import Base, AuditLog, SecurityAlertLog
-        from sqlalchemy import inspect
+        from models import Base, AuditLog, SecurityAlertLog, DataClassificationLog, DataExtractionLog, Conversation
         
-        # Check that models are properly defined
-        table_names = [t.name for t in Base.metadata.tables]
-        print(f"  ✓ Models loaded: {len(table_names)} tables defined")
-        
-        expected_tables = [
-            "audit_logs",
-            "security_alert_logs",
-            "data_classifications",
-            "data_extractions",
-            "conversations",
+        # Verify models are properly defined by checking their __tablename__ attribute
+        expected_models = [
+            (AuditLog, "audit_logs"),
+            (SecurityAlertLog, "security_alert_logs"),
+            (DataClassificationLog, "data_classifications"),
+            (DataExtractionLog, "data_extractions"),
+            (Conversation, "conversations"),
         ]
         
-        missing = [t for t in expected_tables if t not in table_names]
-        if missing:
-            print(f"  ⚠ Missing tables: {missing}")
+        # Check if models have expected table names
+        model_checks = []
+        for model_class, expected_table in expected_models:
+            if hasattr(model_class, '__tablename__'):
+                actual_table = model_class.__tablename__
+                if actual_table == expected_table:
+                    model_checks.append(f"✓ {model_class.__name__}: {expected_table}")
+                else:
+                    model_checks.append(f"✗ {model_class.__name__}: expected {expected_table}, got {actual_table}")
+            else:
+                model_checks.append(f"✗ {model_class.__name__}: missing __tablename__ attribute")
+        
+        # Print results
+        if all('✓' in check for check in model_checks):
+            print(f"  ✓ All {len(expected_models)} expected models properly defined")
+            for check in model_checks:
+                print(f"    {check}")
+            return True
         else:
-            print(f"  ✓ All expected tables defined")
+            print(f"  ✗ Some models have issues:")
+            for check in model_checks:
+                print(f"    {check}")
+            return False
             
-        return True
     except Exception as e:
         print(f"  ✗ Models test failed: {e}")
         import traceback

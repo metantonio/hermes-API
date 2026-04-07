@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import modules
 from main import app
-from config import get_settings, init_config, SECURITY_SETTINGS
+from config import get_settings, init_config
 from security_filter import create_security_filter, SecurityFilter
 from models import (
     create_database_engine,

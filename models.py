@@ -139,7 +139,7 @@ class DataClassificationLog(Base):
     classification = Column(String(50), nullable=False)
     source_url = Column(String(500), nullable=True)
     extracted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    metadata = Column(JSON, nullable=True)
+    classification_metadata = Column(JSON, nullable=True)
     user_id = Column(String(64), nullable=True)
     retention_days = Column(Integer, nullable=True)
     
@@ -157,7 +157,7 @@ class DataClassificationLog(Base):
             "classification": self.classification,
             "source_url": self.source_url,
             "extracted_at": self.extracted_at.isoformat() if self.extracted_at else None,
-            "metadata": self.metadata,
+            "classification_metadata": self.classification_metadata,
             "user_id": self.user_id,
             "retention_days": self.retention_days,
         }
@@ -224,7 +224,7 @@ class Conversation(Base):
     message = Column(Text, nullable=False)
     role = Column(String(20), nullable=False)  # "user" or "assistant"
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    metadata = Column(JSON, nullable=True)
+    conversation_metadata = Column(JSON, nullable=True)
     sanitized = Column(Boolean, default=True)
     
     __table_args__ = (
@@ -236,14 +236,14 @@ class Conversation(Base):
         """Convert to dictionary"""
         return {
             "id": self.id,
-            "conversation_id": self.conversation_id,
-            "user_id": self.user_id,
-            "message": self.message[:5000],  # Truncate for safety
-            "role": self.role,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "metadata": self.metadata,
-            "sanitized": self.sanitized,
-        }
+ "conversation_id": self.conversation_id,
+    "user_id": self.user_id,
+    "message": self.message[:5000],  # Truncate for safety
+    "role": self.role,
+    "created_at": self.created_at.isoformat() if self.created_at else None,
+    "conversation_metadata": self.conversation_metadata,
+    "sanitized": self.sanitized,
+}
 
 
 # ============================================================================
