@@ -1,0 +1,173 @@
+# ============================================================================
+# Hermes Web Data API - Git Ignore File
+# ============================================================================
+# Python-specific ignores
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Environments
+.env
+.env.local
+.env.*.local
+.venv/
+env/
+env.bak/
+venv/
+env/
+venv/
+ENV/
+env/
+.venv/
+env/
+venv/
+ENV/
+.venv/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+.idea/
+*.sublime-*
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pytype
+.pytype/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# ============================================================================
+# Project-specific ignores for Hermes Web Data API
+# ============================================================================
+
+# Database files (SQLite)
+*.db
+*.sqlite
+*.sqlite3
+hermes.db
+
+# Logs
+*.log
+logs/
+log/
+var/log/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Secrets and keys (even if they exist, keep them out of version control)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+keys/
+
+# Deployment artifacts
+*.tar.gz
+*.zip
+*.war
+*.ear
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# Local configuration
+config.local.*
+settings.local.*
+.local/
+
+# Test data
+test_data/
+test_files/
+fixtures/
+data/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
+# ============================================================================
+# General ignores
+# ============================================================================
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ============================================================================
+# End of .gitignore
+# ============================================================================
