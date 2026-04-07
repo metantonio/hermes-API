@@ -17,7 +17,7 @@ A production-ready, secure API for web data extraction with comprehensive securi
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/metantonio/hermes-API
 cd hermes/api
 
 # Create virtual environment
