@@ -252,20 +252,22 @@ Responde de manera útil, precisa y segura. Mantén un tono profesional."""
             logger.warning(f"Registro de conversación falló: {e}")
 
 # ============================================================================
-# Rutas de API
+# Configuración y servicios
 # ============================================================================
-
-# Inicializar servicios
-credential_filter = CredentialFilter(get_settings())
-data_extractor = DataExtractor(credential_filter)
-hermes_chat = HermesChatService(credential_filter)
 
 def get_settings():
     """Obtener configuración"""
     class Settings:
         AUDIT_ENABLED = False
         AUDIT_ENDPOINT = ""
+        API_HERMES_KEY = os.getenv("API_HERMES_KEY", "your-hermes-api-key-here")
     return Settings()
+
+# Inicializar servicios
+settings = get_settings()
+credential_filter = CredentialFilter(settings)
+data_extractor = DataExtractor()
+hermes_chat = HermesChatService(credential_filter)
 
 # Rutas principales
 @app.get("/")

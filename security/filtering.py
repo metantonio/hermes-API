@@ -701,3 +701,171 @@ if __name__ == "__main__":
     print("\nAlerts generated:")
     for alert in alerts:
         print(f"  - {alert['type']}: {alert['message']}")
+
+
+# ============================================================================
+# CredentialFilter - Main filtering class for Hermes Web Data API
+# ============================================================================
+
+class CredentialFilter:
+    """
+    Main credential filter class for Hermes Web Data API.
+    
+    This class provides the main filtering functionality for detecting
+    and sanitizing credentials, API keys, and other sensitive data.
+    """
+
+    def __init__(self, settings=None):
+        """
+        Initialize CredentialFilter.
+        
+        Args:
+            settings: Optional settings object with configuration.
+        """
+        self.settings = settings
+        self.alert_registry = SecurityAlertRegistry()
+        self.security_filter = SecurityFilter()
+        self.data_extractor = DataExtractor()
+        self.filter_string = lambda s, context="": s  # Add filter method as lambda function that accepts context
+
+    def get_settings(self):
+        """
+        Get the current settings.
+        
+        Returns:
+            Settings object or None if not configured.
+        """
+        return self.settings
+
+    def filter_content(self, content: str, context: str = "unknown") -> tuple:
+        """
+        Filter and sanitize content using all configured filters.
+        
+        Args:
+            content: Input content to filter
+            context: Context information for logging
+            
+        Returns:
+            Tuple of (filtered_content, alerts)
+        """
+        if not content:
+            return "", []
+        
+        filtered_content, alerts = self.security_filter.filter_content(
+            content, context
+        )
+        
+        # Apply data extraction filtering
+        if self.data_extractor:
+            extracted_data, extract_alerts = self.data_extractor.extract_data(
+                filtered_content, context
+            )
+            alerts.extend(extract_alerts)
+        
+        return filtered_content, alerts
+
+    def detect_credentials(self, content: str) -> list:
+        """
+        Detect credentials in the given content.
+        
+        Args:
+            content: Content to scan for credentials
+            
+        Returns:
+            List of detected credentials with details
+        """
+        alerts, _ = self.filter_content(content, context="credential_scan")
+        return [
+            a for a in alerts 
+            if a.get("type") in ["CREDENTIAL_DETECTED", "API_KEY_DETECTED"]
+        ]
+
+    def get_alert_summary(self) -> dict:
+        """
+        Get a summary of all security alerts.
+        
+        Returns:
+            Dictionary with alert summary statistics
+        """
+        return self.alert_registry.get_summary()
+
+    def reset_alerts(self):
+        """Reset all stored alerts."""
+        self.alert_registry.alerts.clear()
+        self.alert_registry.alert_counts.clear()
+
+
+class DataExtractor:
+    """
+    Data extractor for finding and classifying data in content.
+    
+    Extracts and classifies different types of data such as:
+    - URLs and domains
+    - Email addresses
+    - Phone numbers
+    - Dates and times
+    - Financial data
+    """
+
+    def __init__(self):
+        """Initialize the data extractor."""
+        self.patterns = {
+            "urls": [
+                re.compile(r'https?://[^\s]+', re.IGNORECASE),
+                re.compile(r'ftp://[^\s]+', re.IGNORECASE),
+            ],
+            "emails": re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', re.IGNORECASE),
+            "phones": re.compile(r'\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b'),
+            "dates": re.compile(
+                r'\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{2,4}\b',
+                re.IGNORECASE
+            ),
+        }
+    
+    def extract_data(self, content: str, context: str = "unknown") -> tuple:
+        """
+        Extract and classify data from content.
+        
+        Args:
+            content: Content to extract data from
+            context: Context for logging
+            
+        Returns:
+            Tuple of (extracted_data, alerts)
+        """
+        alerts = []
+        extracted = {}
+        
+        # Extract URLs
+        for pattern in self.patterns["urls"]:
+            matches = pattern.findall(content)
+            if matches:
+                extracted["urls"] = extracted.get("urls", []) + list(matches)
+                
+                for url in matches:
+                    if "malware" in url.lower() or "virus" in url.lower():
+                        alerts.append({
+                            "type": "MALWARE_URL",
+                            "url": url[:100],
+                            "level": AlertLevel.WARNING.value
+                        })
+        
+        # Extract emails
+        emails = self.patterns["emails"].findall(content)
+        if emails:
+            extracted["emails"] = emails
+            for email in emails:
+                # Check if email is suspicious
+                if "spam" in email.lower() or "fake" in email.lower():
+                    alerts.append({
+                        "type": "SUSPICIOUS_EMAIL",
+                        "email": email[:100],
+                        "level": AlertLevel.INFO.value
+                    })
+        
+        # Extract phone numbers
+        phones = self.patterns["phones"].findall(content)
+        if phones:
+            extracted["phones"] = phones
+        
+        return extracted, alerts
