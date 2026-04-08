@@ -257,10 +257,34 @@ Responde de manera útil, precisa y segura. Mantén un tono profesional."""
 
 def get_settings():
     """Obtener configuración"""
+    # Cargar API_HERMES_KEY desde el archivo .env si no está en el entorno
+    api_key_from_env = os.getenv("API_HERMES_KEY")
+    if not api_key_from_env or api_key_from_env in ["your-hermes-api-key-here", ""]:
+        # Intentar cargar desde archivo .env
+        env_file = Path(os.path.expanduser("~/.hermes/api/.env"))
+        if env_file.exists():
+            try:
+                with open(env_file, "r") as f:
+                    for line in f:
+                        if line.startswith("API_HERMES_KEY="):
+                            # Limpiar la línea y extraer el valor
+                            value = line.split("=", 1)[1].strip()
+                            # Eliminar comillas si existen
+                            if value.startswith('"') and value.endswith('"'):
+                                value = value[1:-1]
+                            elif value.startswith("'") and value.endswith("'"):
+                                value = value[1:-1]
+                            # Verificar que no sea un valor por defecto
+                            if value and value not in ["change-me-local-dev-work", ""]:
+                                api_key_from_env = value
+                                break
+            except Exception as e:
+                logger.warning(f"Error leyendo archivo .env: {e}")
+    
     class Settings:
         AUDIT_ENABLED = False
         AUDIT_ENDPOINT = ""
-        API_HERMES_KEY = os.getenv("API_HERMES_KEY", "your-hermes-api-key-here")
+        API_HERMES_KEY = api_key_from_env or os.getenv("API_HERMES_KEY", "your-hermes-api-key-here")
     return Settings()
 
 # Inicializar servicios
@@ -292,6 +316,16 @@ async def chat_with_hermes(request: ChatRequest, background_tasks: BackgroundTas
     - Genera respuesta con IA local Qwen3.5
     - Registra conversación para auditoría
     """
+    # Validar API key si está configurada
+    if settings.API_HERMES_KEY and settings.API_HERMES_KEY != "your-hermes-api-key-here":
+        auth_header = request.headers.get("authorization", "")
+        expected_key = f"Bearer {settings.API_HERMES_KEY}"
+        if auth_header != expected_key:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}
+            )
+    
     try:
         response = hermes_chat.chat(request)
         return response.model_dump()
