@@ -3,6 +3,7 @@
 
 import urllib.request
 import json
+import os
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -53,8 +54,9 @@ def test_chat():
         print(f"Model: {result.get('model')}")
         print(f"Choices count: {len(result.get('choices', []))}")
         print(f"Usage: {result.get('usage')}")
-        print("\nAssistant response:")
-        print(result.get('choices', [{}])[0].get('message', {}).get('content', 'N/A')[:200])
+        print("\nAssistant response (first 200 chars):")
+        content = result.get('choices', [{}])[0].get('message', {}).get('content', 'N/A')
+        print(content[:200] if content else 'N/A')
         return True
     except Exception as e:
         print(f"Error: {e}")

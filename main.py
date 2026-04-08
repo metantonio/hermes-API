@@ -25,19 +25,51 @@ except ImportError as e:
 # Modelos de datos
 # ============================================================================
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 class ChatRequest(BaseModel):
-    message: str
-    context: Optional[Dict[str, Any]] = {}
+    """
+    Modelo de entrada compatible con OpenAI
+    - model: Modelo a usar (opcional, default: hermes-agent)
+    - messages: Lista de mensajes de la conversación
+    - stream: Si usar streaming (opcional, default: False)
+    """
+    model_config = {
+        "from_attributes": True,
+        "validate_default": True
+    }
+    
+    model: str = Field(
+        default="hermes-agent",
+        description="Modelo a usar (default: hermes-agent)"
+    )
+    messages: List[Dict[str, Any]] = Field(
+        default=[],
+        description="Lista de mensajes de la conversación"
+    )
+    stream: bool = Field(
+        default=False,
+        description="Usar streaming (default: False)"
+    )
 
 class ChatResponse(BaseModel):
-    message: str
-    conversation_id: str
-    timestamp: str
-    safety_checks: Dict[str, Any]
+    """
+    Modelo de respuesta OpenAI-compatible
+    - id: ID único de la respuesta
+    - object: Tipo de objeto
+    - created: Timestamp
+    - model: Modelo usado
+    - choices: Lista de respuestas
+    - usage: Uso de tokens
+    """
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: List[Dict[str, Any]]
+    usage: Dict[str, int]
 
 # ============================================================================
 # Servidor FastAPI
@@ -87,52 +119,68 @@ from security.filtering import CredentialFilter, DataExtractor
 
 class HermesChatService:
     """Servicio para chat con Hermes AI"""
-    
+
     def __init__(self, filter: CredentialFilter):
         self.filter = filter
         self.conversation_cache: Dict[str, List[dict]] = {}
-    
+
     def chat(
         self,
         request: ChatRequest,
         conversation_id: Optional[str] = None
     ) -> ChatResponse:
-        """Chat con Hermes AI con filtrado de seguridad"""
+        """
+        Chat con Hermes AI con filtrado de seguridad
+        - Filtra credenciales y URLs peligrosas
+        - Genera respuesta con IA local Qwen3.5
+        - Registra conversación para auditoría
+        """
         request_id = str(__import__('uuid').uuid4())
         timestamp = datetime.now(timezone.utc).isoformat()
-        
+
         # Inicializar o obtener conversación
         if not conversation_id:
             conversation_id = str(__import__('uuid').uuid4())
-        
+
         if conversation_id not in self.conversation_cache:
             self.conversation_cache[conversation_id] = []
-        
+
         conversation = self.conversation_cache[conversation_id]
-        
-        # Agregar mensaje del usuario
-        user_message = {
-            "role": "user",
-            "content": request.message,
-            "timestamp": timestamp,
-            "request_id": request_id
-        }
-        conversation.append(user_message)
-        
+
+        # Agregar mensaje del usuario si no hay mensajes
+        if not conversation:
+            # Usar el primer mensaje si existe en request.messages
+            if request.messages and len(request.messages) > 0:
+                first_msg = request.messages[0]
+                if first_msg.get("role") == "user":
+                    user_message = {
+                        "role": "user",
+                        "content": first_msg.get("content", ""),
+                        "timestamp": timestamp,
+                        "request_id": request_id
+                    }
+                    conversation.append(user_message)
+                    message_to_process = first_msg.get("content", "")
+                else:
+                    # Si no hay mensaje de usuario, usar el último mensaje
+                    message_to_process = request.messages[-1].get("content", "") if request.messages else ""
+            else:
+                message_to_process = ""
+
         # Verificar seguridad
         safety_results = {
             "contains_credentials": False,
             "contains_dangerous_links": False,
             "suggested_response": ""
         }
-        
+
         # Filtrar mensaje del usuario
         filtered_message = self.filter.filter_string(
-            request.message,
+            message_to_process,
             context="user_message"
         )
-        
-        if filtered_message != request.message:
+
+        if filtered_message != message_to_process:
             # Credenciales o datos sensibles detectados
             safety_results["contains_credentials"] = True
             safety_results["suggested_response"] = (
@@ -140,38 +188,48 @@ class HermesChatService:
                 "contraseñas u otros datos sensibles. "
                 "Por favor, elimínalos e inténtalo de nuevo."
             )
-        
+
         # Verificar URLs peligrosas
         dangerous_url_pattern = r'https?://[\w-]+\.exe|\.sh|\.py|\.bat|\.cmd'
-        if __import__('re').search(dangerous_url_pattern, request.message, __import__('re').IGNORECASE):
+        if __import__('re').search(dangerous_url_pattern, message_to_process, __import__('re').IGNORECASE):
             safety_results["contains_dangerous_links"] = True
             safety_results["suggested_response"] = (
                 "No puedo ayudar con la descarga o ejecución de archivos peligrosos. "
                 "Por favor, elimina las URL y haz otra pregunta."
             )
-        
+
         # Generar respuesta de Hermes
         if safety_results["suggested_response"]:
             # Retornar mensaje de seguridad
             return ChatResponse(
-                message=safety_results["suggested_response"],
-                conversation_id=conversation_id,
-                timestamp=timestamp,
-                safety_checks=safety_results
+                id=f"chatcmpl-{__import__('uuid').uuid4().hex[:12]}",
+                object="chat.completion",
+                created=int(datetime.now(timezone.utc).timestamp()),
+                model=request.model or "hermes-agent",
+                choices=[{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": safety_results["suggested_response"]},
+                    "finish_reason": "safety"
+                }],
+                usage={
+                    "prompt_tokens": 10,
+                    "completion_tokens": 50,
+                    "total_tokens": 60
+                }
             )
-        
+
         # Generar respuesta de IA usando Hermes local
         ai_response = self._generate_hermes_response(
-            request.message,
+            message_to_process,
             conversation
         )
-        
+
         # Filtrar respuesta de IA
         filtered_response = self.filter.filter_string(
             ai_response,
             context="ai_response"
         )
-        
+
         # Agregar a historial de conversación
         ai_message = {
             "role": "assistant",
@@ -181,17 +239,28 @@ class HermesChatService:
             "safety_filtered": True
         }
         conversation.append(ai_message)
-        
+
         # Registrar conversación para auditoría
-        self._log_conversation(conversation_id, user_message, ai_message)
-        
+        self._log_conversation(conversation_id, ai_message)
+
+        # Retornar respuesta en formato OpenAI
         return ChatResponse(
-            message=filtered_response,
-            conversation_id=conversation_id,
-            timestamp=timestamp,
-            safety_checks=safety_results
+            id=f"chatcmpl-{__import__('uuid').uuid4().hex[:12]}",
+            object="chat.completion",
+            created=int(datetime.now(timezone.utc).timestamp()),
+            model=request.model or "hermes-agent",
+            choices=[{
+                "index": 0,
+                "message": {"role": "assistant", "content": filtered_response},
+                "finish_reason": "stop"
+            }],
+            usage={
+                "prompt_tokens": 10,
+                "completion_tokens": len(filtered_response),
+                "total_tokens": 10 + len(filtered_response)
+            }
         )
-    
+
     def _generate_hermes_response(
         self,
         message: str,
@@ -210,8 +279,13 @@ class HermesChatService:
 - Respuestas concisas y precisas
 
 Responde de manera útil, precisa y segura. Mantén un tono profesional."""
-            
+
             # Construir mensaje completo con historial de conversación
+            history = "\n".join([
+                f"### {msg.get('role', 'unknown')}: {msg.get('content', '')[:200]}"
+                for msg in conversation[-10:]
+            ]) if conversation else "No previous messages"
+
             full_prompt = f"""### System
 {system_prompt}
 
@@ -219,11 +293,11 @@ Responde de manera útil, precisa y segura. Mantén un tono profesional."""
 {message}
 
 ### Conversation History
-{conversation[-5:] if conversation else 'No previous messages'}
+{history}
 
 ### Assistant
 """
-            
+
             # Llamar al modelo local
             response = intercept_llm_call(
                 prompt=full_prompt,
@@ -231,16 +305,15 @@ Responde de manera útil, precisa y segura. Mantén un tono profesional."""
                 max_tokens=1024
             )
             return response.strip()
-            
+
         except Exception as e:
             # Manejar errores gracefulmente
             logger.error(f"Error en Hermes AI: {e}")
             return "Lo siento, estoy teniendo problemas técnicos. Por favor, intenta de nuevo más tarde."
-    
+
     def _log_conversation(
         self,
         conversation_id: str,
-        user_message: dict,
         ai_message: dict
     ):
         """Registrar conversación para auditoría"""
@@ -279,29 +352,18 @@ def get_settings():
                                 api_key_from_env = value
                                 break
             except Exception as e:
-                logger.warning(f"Error leyendo archivo .env: {e}")
-    
-    class Settings:
-        AUDIT_ENABLED = False
-        AUDIT_ENDPOINT = ""
-        API_HERMES_KEY = api_key_from_env or os.getenv("API_HERMES_KEY", "your-hermes-api-key-here")
-    return Settings()
+                logger.warning(f"Error leyendo .env: {e}")
 
-# Inicializar servicios
-settings = get_settings()
-credential_filter = CredentialFilter(settings)
-data_extractor = DataExtractor()
-hermes_chat = HermesChatService(credential_filter)
-
-# Rutas principales
-@app.get("/")
-async def root():
-    """Endpoint raíz"""
     return {
-        "service": "Hermes Web Data API",
-        "version": "1.0.0",
-        "status": "running"
+        "API_HERMES_KEY": api_key_from_env or "your-hermes-api-key-here"
     }
+
+settings = get_settings()
+
+# Inicializar servicio de chat
+hermes_chat = HermesChatService(
+    filter=CredentialFilter(settings=getattr(settings, "ALLOWED_DOMAINS", []))
+)
 
 @app.get("/health")
 async def health_check():
@@ -312,20 +374,21 @@ async def health_check():
 async def chat_with_hermes(request: ChatRequest, background_tasks: BackgroundTasks):
     """
     Endpoint principal para chat con Hermes AI
+    - Compatible con OpenAI format
     - Filtra credenciales y URLs peligrosas
     - Genera respuesta con IA local Qwen3.5
     - Registra conversación para auditoría
     """
     # Validar API key si está configurada
-    if settings.API_HERMES_KEY and settings.API_HERMES_KEY != "your-hermes-api-key-here":
+    if settings["API_HERMES_KEY"] and settings["API_HERMES_KEY"] != "your-hermes-api-key-here":
         auth_header = request.headers.get("authorization", "")
-        expected_key = f"Bearer {settings.API_HERMES_KEY}"
+        expected_key = f"Bearer {settings['API_HERMES_KEY']}"
         if auth_header != expected_key:
             return JSONResponse(
                 status_code=401,
                 content={"error": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}
             )
-    
+
     try:
         response = hermes_chat.chat(request)
         return response.model_dump()
@@ -358,16 +421,16 @@ async def extract_data(url: str, max_pages: int = 5):
 if __name__ == "__main__":
     import uvicorn
     import getpass
-    
+
     # Leer configuración de entorno
     HERMES_HOME = Path(os.path.expanduser("~/.hermes"))
     config_file = HERMES_HOME / ".hermes" / "config.yaml"
-    
+
     if config_file.exists():
         logger.info(f"Configuración encontrada: {config_file}")
     else:
         logger.warning("Configuración no encontrada, usando defaults")
-    
+
     # Iniciar servidor
     uvicorn.run(
         "main:app",
