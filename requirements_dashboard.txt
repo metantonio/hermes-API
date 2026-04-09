@@ -1,0 +1,28 @@
+# Requirements para Hermes Dashboard UI
+
+# FastAPI (ya incluido en el API)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Streamlit para el UI
+streamlit>=1.28.0
+
+# Librerías de datos
+numpy>=1.24.0
+pandas>=2.0.0
+
+# SQLAlchemy (ya incluido)
+sqlalchemy>=2.0.0
+
+# Pydantic
+pydantic>=2.4.0
+
+# Playwright (ya incluido)
+playwright>=1.40.0
+
+# llama-cpp-python
+llama-cpp-python>=0.2.0
+
+# Otros utilitarios
+python-dotenv>=1.0.0
+tqdm>=4.65.0

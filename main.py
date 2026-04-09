@@ -370,7 +370,7 @@ async def health_check():
     """Verificar estado del servidor"""
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-@app.post("/api/v1/chat")
+@app.post("/api/v1/chat", response_model=ChatResponse, response_model_exclude_none=True)
 async def chat_with_hermes(request: ChatRequest, background_tasks: BackgroundTasks):
     """
     Endpoint principal para chat con Hermes AI
@@ -380,23 +380,42 @@ async def chat_with_hermes(request: ChatRequest, background_tasks: BackgroundTas
     - Registra conversación para auditoría
     """
     # Validar API key si está configurada
-    if settings["API_HERMES_KEY"] and settings["API_HERMES_KEY"] != "your-hermes-api-key-here":
+    api_key = settings.get("API_HERMES_KEY", "")
+    if api_key and api_key != "your-hermes-api-key-here":
         auth_header = request.headers.get("authorization", "")
-        expected_key = f"Bearer {settings['API_HERMES_KEY']}"
+        expected_key = f"Bearer {api_key}"
         if auth_header != expected_key:
             return JSONResponse(
                 status_code=401,
-                content={"error": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}
+                content={
+                    "error": "Invalid API key",
+                    "type": "invalid_request_error",
+                    "code": "invalid_api_key"
+                }
             )
 
     try:
-        response = hermes_chat.chat(request)
-        return response.model_dump()
+        # Usar run_coroutine_threadpool para ejecutar método síncrono en hilo separado
+        import asyncio
+        try:
+            # Ejecutar el método chat en un hilo separado para evitar bloqueos
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: hermes_chat.chat(request)
+            )
+            return response.model_dump()
+        except Exception as e:
+            logger.error(f"Error ejecutando chat: {e}")
+            raise
     except Exception as e:
         logger.error(f"Error en chat: {e}")
         return JSONResponse(
             status_code=500,
-            content={"error": "Internal server error", "details": str(e)}
+            content={
+                "error": "Internal server error",
+                "details": str(e)
+            }
         )
 
 @app.post("/api/v1/extract")
