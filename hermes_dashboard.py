@@ -12,13 +12,14 @@ Características:
 import streamlit as st
 import json
 import os
-from pathlib import Path
-from datetime import datetime
 import sqlite3
 import urllib.request
 import urllib.error
 import sys
 from pathlib import Path
+from datetime import datetime
+from collections import defaultdict
+import hashlib
 
 # Agregar ~/.hermes al path para encontrar hermes_wrapper
 hermes_dir = Path.home() / ".hermes"
@@ -27,7 +28,10 @@ if hermes_dir.exists() and str(hermes_dir) not in sys.path:
 
 from hermes_wrapper import HermesAgent, get_hermes_info
 
+# ============================================================================
 # Configuración de página
+# ============================================================================
+
 st.set_page_config(
     page_title="Hermes Dashboard",
     page_icon="🦉",
@@ -43,6 +47,7 @@ st.markdown("""
     .api-response {background-color: #f0f7ff; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0;}
     .status-ok {color: #28a745; font-weight: bold;}
     .status-error {color: #dc3545; font-weight: bold;}
+    .endpoint-info {background-color: #f8f9fa; border-left: 4px solid #17a2b8; padding: 1rem; margin: 1rem 0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -130,7 +135,6 @@ def get_sessions():
     
     if sessions_path.exists():
         for item in sessions_path.glob("*.json"):
-            # Obtener fecha del archivo
             filename = item.name
             date_part = filename.split("_")[0] if "_" in filename else "unknown"
             
@@ -148,7 +152,6 @@ def get_work_trees():
     """Obtener información de work trees"""
     work_trees = []
     
-    # Buscar directorios 'work' en profiles
     profiles_path = Path.home() / ".hermes" / "profiles"
     if profiles_path.exists():
         for item in profiles_path.iterdir():
@@ -163,37 +166,105 @@ def get_work_trees():
     
     return work_trees
 
-def call_api_endpoint(endpoint, data=None, method="GET"):
-    """Llamar a endpoint del API de Hermes"""
+def call_api_endpoint(endpoint, data=None, method="GET", api_key=None):
+    """
+    Llamar a endpoint del API de Hermes en puerto 8642
+    
+    Parámetros:
+        endpoint: Endpoint del API (ej: /health, /v1/models)
+        data: Datos JSON para POST/PUT
+        method: Método HTTP (GET, POST, etc.)
+        api_key: API key para autenticación (si None, usa la del .env)
+    
+    Retorna:
+        Dict con el resultado
+    """
+    # URL base del API (puerto 8642 - Hermes API)
+    base_url = "http://127.0.0.1:8642"
+    url = f"{base_url}{endpoint}"
+    
+    headers = {}
+    if data and method in ["POST", "PUT", "PATCH"]:
+        headers["Content-Type"] = "application/json"
+    
+    # Obtener API key por defecto desde ~/.hermes/api/.env
+    if not api_key:
+        default_key = get_default_api_key()
+        if default_key:
+            api_key = default_key
+    
+    # Autenticación si se proporciona API key
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    
     try:
-        # URL base del API (usamos localhost)
-        base_url = "http://localhost:8000"
-        url = f"{base_url}{endpoint}"
-        
-        headers = {}
-        if data and method == "POST":
-            headers["Content-Type"] = "application/json"
-            headers["Authorization"] = "Bearer apikey"  # Verificar API key
-            
-        request = urllib.request.Request(url, data=json.dumps(data).encode() if data else None, 
-                                         headers=headers, method=method)
+        request = urllib.request.Request(url, 
+                                         data=json.dumps(data).encode() if data else None, 
+                                         headers=headers, 
+                                         method=method)
         
         with urllib.request.urlopen(request, timeout=10) as response:
             result = response.read().decode()
-            return {"success": True, "data": result, "status": response.status}
-            
+            return {
+                "success": True, 
+                "data": result, 
+                "status": response.status,
+                "url": url
+            }
     except urllib.error.URLError as e:
-        return {"success": False, "error": str(e.reason) if hasattr(e, 'reason') else str(e)}
+        return {
+            "success": False, 
+            "error": str(e.reason) if hasattr(e, 'reason') else str(e),
+            "url": url
+        }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False, 
+            "error": str(e),
+            "url": url
+        }
 
-def chat_with_hermes(message, agent: HermesAgent = None):
+def get_default_api_key():
     """
-    Chat interactivo con Hermes AI usando el endpoint del API
+    Leer la API key por defecto desde ~/hermes/api/.env
+    
+    Retorna:
+        API key o None si no se encuentra
+    """
+    env_path = Path("/home/antonio/hermes/api/.env")
+    
+    if not env_path.exists():
+        return None
+    
+    try:
+        with open(env_path, "r") as f:
+            content = f.read()
+        
+        # Buscar la variable API_HERMES_KEY
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("API_HERMES_KEY="):
+                # Extraer el valor (todo después del =)
+                api_key = line.split("=", 1)[1].strip()
+                # Quitar comillas si las hay
+                if api_key.startswith('"') and api_key.endswith('"'):
+                    api_key = api_key[1:-1]
+                elif api_key.startswith("'") and api_key.endswith("'"):
+                    api_key = api_key[1:-1]
+                return api_key if api_key else None
+    except Exception as e:
+        print(f"Error leyendo API key: {e}")
+    
+    return None
+
+
+def chat_with_hermes(message, api_key=None):
+    """
+    Chat interactivo con Hermes AI
     
     Parámetros:
         message: El mensaje a enviar a Hermes
-        agent: Instancia de HermesAgent (opcional, se crea una nueva si no se proporciona)
+        api_key: API key para autenticación (si None, usa la del .env)
     
     Retorna:
         Dict con el resultado del chat
@@ -201,44 +272,203 @@ def chat_with_hermes(message, agent: HermesAgent = None):
     if not message.strip():
         return None
     
-    # Crear instancia del agente si no se proporciona
-    if agent is None:
-        agent = HermesAgent()
-    
-    # Usar el endpoint del API para el chat
     try:
-        data = {
+        # Construir URL del endpoint (puerto 8642)
+        endpoint = f"http://127.0.0.1:8642/v1/chat/completions"
+        
+        payload = {
             "model": "hermes-agent",
             "messages": [{"role": "user", "content": message}]
         }
         
-        result = agent._make_request("/api/v1/chat", method="POST", data=data)
+        # Obtener API key por defecto desde ~/.hermes/api/.env
+        if not api_key:
+            default_key = get_default_api_key()
+            if default_key:
+                api_key = default_key
+            else:
+                # Fallback a variable de entorno o key por defecto
+                api_key = os.environ.get("API_SERVER_KEY", "sk-her...2026")
         
-        if result["success"]:
-            try:
-                response_data = json.loads(result["data"])
-                if "choices" in response_data and response_data["choices"]:
-                    return {
-                        "success": True,
-                        "response": response_data["choices"][0]["content"].strip()
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": "Respuesta del API no válida"
-                    }
-            except (json.JSONDecodeError, IndexError) as e:
-                return {
-                    "success": False,
-                    "error": f"Error parseando respuesta: {str(e)}"
-                }
-        else:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST"
+        )
+        
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result_data = response.read().decode()
             return {
-                "success": False,
-                "error": result.get("error", "Error desconocido")
+                "success": True, 
+                "data": result_data, 
+                "status": response.status
             }
+            
+    except urllib.error.URLError as e:
+        return {
+            "success": False,
+            "error": getattr(e, 'reason', str(e)) if hasattr(e, 'reason') else str(e)
+        }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False, 
+            "error": str(e)
+        }
+
+# ============================================================================
+# Gestión de respuestas (RESPONSES)
+# ============================================================================
+
+RESPONSES_DB_PATH = Path.home() / ".hermes" / "responses" / "responses.db"
+
+def init_responses_db():
+    """Inicializar base de datos SQLite para respuestas"""
+    RESPONSES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(RESPONSES_DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS responses (
+        id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        metadata TEXT
+    )
+    """)
+    
+    conn.commit()
+    conn.close()
+
+def save_response(response_data, model, metadata=None):
+    """Guardar una respuesta en la base de datos"""
+    init_responses_db()
+    
+    # Generar ID único si no se proporciona
+    if not response_data.get("id"):
+        timestamp = datetime.now().isoformat()
+        unique_id = hashlib.md5(f"{timestamp}{random.randint(1000, 9999)}".encode()).hexdigest()[:12]
+        response_data["id"] = unique_id
+    
+    conn = sqlite3.connect(RESPONSES_DB_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+        INSERT OR REPLACE INTO responses (id, model, metadata)
+        VALUES (?, ?, ?)
+        """, (
+            response_data.get("id"),
+            model,
+            json.dumps(metadata) if metadata else None
+        ))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        conn.close()
+        return False
+
+def get_response(id):
+    """Obtener una respuesta por ID"""
+    init_responses_db()
+    
+    conn = sqlite3.connect(RESPONSES_DB_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT id, model, status, created_at, metadata FROM responses WHERE id = ?", (id,))
+        row = cursor.fetchone()
+        
+        if row:
+            result = {
+                "id": row[0],
+                "model": row[1],
+                "status": row[2],
+                "created_at": row[3],
+                "metadata": json.loads(row[4]) if row[4] else None
+            }
+            return result
+        return None
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+def update_response_status(id, status, metadata=None):
+    """Actualizar el estado de una respuesta"""
+    init_responses_db()
+    
+    conn = sqlite3.connect(RESPONSES_DB_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+        UPDATE responses 
+        SET status = ?, metadata = ? 
+        WHERE id = ?
+        """, (status, json.dumps(metadata) if metadata else None, id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        conn.close()
+        return False
+
+def get_all_responses():
+    """Obtener todas las respuestas"""
+    init_responses_db()
+    
+    conn = sqlite3.connect(RESPONSES_DB_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+        SELECT id, model, status, created_at, metadata 
+        FROM responses 
+        ORDER BY created_at DESC
+        """)
+        
+        rows = cursor.fetchall()
+        responses = []
+        
+        for row in rows:
+            response = {
+                "id": row[0],
+                "model": row[1],
+                "status": row[2],
+                "created_at": row[3],
+                "metadata": json.loads(row[4]) if row[4] else None
+            }
+            responses.append(response)
+        
+        return responses
+    except Exception as e:
+        return []
+    finally:
+        conn.close()
+
+# ============================================================================
+# Obtener modelos del API
+# ============================================================================
+
+def get_models_from_api():
+    """Obtener lista de modelos disponibles en el API"""
+    result = call_api_endpoint("/v1/models", api_key=None)
+    
+    if result.get("success"):
+        try:
+            data = json.loads(result["data"])
+            return data
+        except:
+            return None
+    return result
 
 # ============================================================================
 # Sidebar - Información del sistema
@@ -266,10 +496,6 @@ with st.sidebar:
         if not info["gateway_running"]:
             st.caption("El gateway API no está activo")
     
-    # Inicializar agente Hermes si no existe
-    if 'hermes_agent' not in locals():
-        hermes_agent = HermesAgent()
-    
     st.markdown("---")
     
     # Configurar API key
@@ -289,7 +515,7 @@ with st.sidebar:
     st.write(f"**Config:** {info['config_exists']}")
     
     if info["config_exists"]:
-        st.code(f"""
+        st.code("""
 config.yaml:
   model_path: Qwen3.5-9B-Q4_K_M
   n_ctx: 8192
@@ -307,21 +533,6 @@ config.yaml:
     st.write(f"**Profiles:** {len(profiles)}")
     st.write(f"**Skills:** {len(skills)}")
     st.write(f"**Sessions:** {len(sessions)}")
-    
-    # Mini gráficos con barras
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        bar = st.progress(len(profiles) / max(len(profiles) + 1, 1))
-        st.caption("Profiles: ✅" if profiles else "Profiles: ⚪")
-    
-    with col2:
-        bar = st.progress(len(skills) / max(len(skills) + 1, 1))
-        st.caption("Skills: ✅" if skills else "Skills: ⚪")
-    
-    with col3:
-        bar = st.progress(len(sessions) / max(len(sessions) + 1, 1))
-        st.caption("Sessions: ✅" if sessions else "Sessions: ⚪")
 
 # ============================================================================
 # Header
@@ -346,11 +557,16 @@ message = st.text_area(
 if st.button("📤 Enviar Mensaje", type="primary"):
     if message.strip():
         with st.spinner("Procesando con Hermes AI..."):
-            result = chat_with_hermes(message)
+            result = chat_with_hermes(message, api_key=api_key if api_key else None)
             
             if result and result.get("success"):
-                st.success("✅ Respuesta de Hermes:")
-                st.markdown(f"```{result['response']}```")
+                try:
+                    data = json.loads(result["data"])
+                    st.success("✅ Respuesta de Hermes:")
+                    st.markdown(f"```{data.get('choices', [{}])[0].get('message', {}).get('content', 'No content')}```")
+                except:
+                    st.success("✅ Respuesta de Hermes:")
+                    st.markdown(result["data"])
                 
                 # Guardar conversación
                 timestamp = datetime.now().isoformat()
@@ -367,7 +583,7 @@ if st.button("📤 Enviar Mensaje", type="primary"):
                     history.append({
                         "timestamp": timestamp,
                         "user": message.strip(),
-                        "assistant": result["response"]
+                        "assistant": result.get("data", "")
                     })
                     
                     with open(conversation_file, "w") as f:
@@ -385,47 +601,94 @@ if st.button("📤 Enviar Mensaje", type="primary"):
 st.markdown('<p class="section-title">🔌 Testear Endpoints API</p>', unsafe_allow_html=True)
 
 # Test del endpoint /health
-with st.expander("🏥 Testear /health (Health Check)"):
-    health_result = call_api_endpoint("/health")
+with st.expander("🏥 Testear /health (Health Check)", expanded=True):
+    health_result = call_api_endpoint("/health", api_key=api_key if api_key else None)
     
     if health_result.get("success"):
         health_data = json.loads(health_result["data"])
-        status_icon = "✅" if health_data.get("status") == "healthy" else "❌"
+        status_icon = "✅" if health_data.get("status") == "ok" else "❌"
         
         st.markdown(f"**{status_icon} Status:** {health_data.get('status', 'unknown')}")
-        st.markdown(f"**Timestamp:** {health_data.get('timestamp', 'unknown')}")
+        st.markdown(f"**API:** {health_data.get('platform', 'unknown')}")
         
-        if health_result.get("status") == "healthy":
+        if health_result.get("status") == "ok":
             st.success("El API está funcionando correctamente")
     else:
         st.error(f"Error conectando al API: {health_result.get('error', 'Unknown error')}")
-        st.info("📌 Nota: El API debe estar corriendo en localhost:8000")
+        st.info("📌 Nota: El API debe estar corriendo en puerto 8642")
 
-# Test del endpoint /api/v1/chat
-with st.expander("💬 Testear /api/v1/chat"):
-    test_message = st.text_input(
-        "Mensaje de prueba:",
-        value="Hola, ¿cómo estás?",
-        key="test_chat_input"
+# Test del endpoint POST /v1/responses
+with st.expander("💾 POST /v1/responses (Guardar Respuesta)", expanded=False):
+    response_id = st.text_input(
+        "ID de la respuesta:",
+        help="Generar automáticamente o ingresar un ID personalizado"
     )
     
-    if st.button("📤 Enviar Test Chat"):
-        if test_message.strip():
-            chat_result = call_api_endpoint(
-                "/api/v1/chat",
-                data=json.dumps({
-                    "model": "hermes-agent",
-                    "messages": [{"role": "user", "content": test_message}]
-                }),
-                method="POST"
-            )
+    model_name = st.text_input(
+        "Modelo:",
+        value="hermes-agent",
+        help="Nombre del modelo usado"
+    )
+    
+    metadata = st.text_area(
+        "Metadata (JSON)",
+        help="Información adicional sobre la respuesta"
+    )
+    
+    if st.button("💾 Guardar Respuesta", type="secondary"):
+        if response_id.strip() or not response_id.strip():
+            data = {
+                "id": response_id.strip() if response_id.strip() else None,
+                "model": model_name,
+                "metadata": metadata
+            }
             
-            if chat_result.get("success"):
-                chat_data = json.loads(chat_result["data"])
-                st.success("✅ Respuesta del API:")
-                st.json(chat_data)
+            success = save_response(data, model_name, metadata)
+            
+            if success:
+                st.success("✅ Respuesta guardada correctamente")
+                
+                # Actualizar estado en el API
+                status_result = call_api_endpoint(
+                    f"/v1/responses/{data.get('id')}",
+                    data=json.dumps({
+                        "id": data.get("id"),
+                        "model": model_name,
+                        "status": "saved",
+                        "metadata": metadata
+                    }),
+                    method="POST",
+                    api_key=api_key if api_key else None
+                )
+                
+                if status_result.get("success"):
+                    st.info("✅ Estado actualizado en el API")
+                else:
+                    st.warning(f"⚠️ Error actualizando API: {status_result.get('error')}")
             else:
-                st.error(f"❌ Error API: {chat_result.get('error', 'Unknown error')}")
+                st.error("❌ Error guardando respuesta")
+        else:
+            st.warning("⚠️ Por favor, ingresa un ID válido")
+
+# Obtener y mostrar respuestas guardadas
+with st.expander("📂 Respuestas Guardadas", expanded=False):
+    responses = get_all_responses()
+    
+    if not responses:
+        st.info("No hay respuestas guardadas")
+    else:
+        st.write(f"**{len(responses)} respuestas encontradas:**")
+        
+        # Agrupar por modelo
+        by_model = defaultdict(list)
+        for resp in responses:
+            by_model[resp["model"]].append(resp)
+        
+        for model, resp_list in by_model.items():
+            st.markdown(f"**📁 {model}:**")
+            for resp in resp_list[:5]:
+                status_icon = "✅" if resp["status"] == "saved" else "⏳"
+                st.write(f"  • {status_icon} **{resp['id']}** - {resp['status'][:20]}")
 
 # ============================================================================
 # Sección 3: Informes del Sistema
@@ -449,9 +712,6 @@ name: {profile['name']}
 path: {profile['path']}
 created: {datetime.fromtimestamp(profile['created']).strftime('%Y-%m-%d %H:%M:%S')}
                 """)
-                
-                if "metadata" in profile:
-                    st.json(profile["metadata"])
 
 # 3.2 Skills
 with st.expander("🎨 Skills", expanded=False):
@@ -474,11 +734,6 @@ with st.expander("🎨 Skills", expanded=False):
             for skill in skill_list:
                 icon = "✅" if skill["has_bundled"] else "⚪"
                 st.write(f"  • {icon} **{skill['name']}**")
-                st.code(f"""
-name: {skill['name']}
-category: {skill['category']}
-has_bundled: {skill['has_bundled']}
-                """)
 
 # 3.3 Sessions
 with st.expander("📅 Sessions", expanded=False):
@@ -518,11 +773,6 @@ with st.expander("🌳 Work Trees", expanded=False):
         
         for tree in work_trees:
             st.write(f"  • **{tree['profile']}**: {tree['items']} items")
-            st.code(f"""
-profile: {tree['profile']}
-path: {tree['path']}
-items: {tree['items']}
-            """)
 
 # ============================================================================
 # Sección 4: Información Adicional
@@ -546,11 +796,28 @@ with st.expander("🧠 Estado del Modelo"):
         st.warning("El modelo no está encontrado. Verifica que la ruta es correcta.")
 
 # 4.2 Endpoints Disponibles
-with st.expander("🔗 Endpoints del API"):
+with st.expander("🔗 Endpoints del API", expanded=True):
     endpoints = [
-        {"path": "/health", "method": "GET", "description": "Health check del servidor"},
-        {"path": "/api/v1/chat", "method": "POST", "description": "Chat con Hermes AI"},
-        {"path": "/api/v1/extract", "method": "POST", "description": "Extraer datos de URL"}
+        {
+            "path": "/health", 
+            "method": "GET", 
+            "description": "Health check del servidor"
+        },
+        {
+            "path": "/v1/models", 
+            "method": "GET", 
+            "description": "Obtener lista de modelos disponibles"
+        },
+        {
+            "path": "/v1/responses", 
+            "method": "POST", 
+            "description": "Guardar una nueva respuesta"
+        },
+        {
+            "path": "/v1/responses/{id}", 
+            "method": "GET/PUT", 
+            "description": "Obtener o actualizar una respuesta"
+        }
     ]
     
     st.write("**Endpoints disponibles:**")
@@ -572,7 +839,7 @@ source venv/bin/activate
 python main.py
 ```
 
-El servidor se inicia en http://localhost:8000
+El servidor se inicia en http://127.0.0.1:8642
 
 Para ver el historial del chat:
 ```bash
@@ -595,23 +862,27 @@ st.caption(
 # Inicialización
 # ============================================================================
 
+# Inicializar base de datos de respuestas
+init_responses_db()
+
 # Verificar si el API está corriendo al iniciar
 def check_api_status():
     """Verificar estado del API al cargar"""
     try:
-        url = "http://localhost:8000/health"
+        url = "http://127.0.0.1:8642/health"
         response = urllib.request.urlopen(url, timeout=2)
         data = json.loads(response.read().decode())
         
-        if data.get("status") == "healthy":
-            st.sidebar.success("✅ API Hermes está online")
+        if data.get("status") == "ok":
             return True
     except:
         pass
     
-    st.sidebar.info("⚠️ El API no está corriendo en localhost:8000")
-    st.sidebar.info("Inicia el API con: `python ~/hermes/api/main.py`")
-    
     return False
 
-check_api_status()
+# Mostrar estado inicial
+if check_api_status():
+    st.sidebar.success("✅ API Hermes está online en puerto 8642")
+else:
+    st.sidebar.info("⚠️ El API no está corriendo en puerto 8642")
+    st.sidebar.info("Inicia el API con: `python ~/hermes/api/main.py`")
